@@ -78,7 +78,7 @@ final class HubController {
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.animationBehavior = .utilityWindow
-        let root = HubView(onEngineChange: { [weak app] id in app?.selectEngine(id) }, onClose: { [weak self] in self?.hide() })
+        let root = HubView(onEngineChange: { [weak app] id in app?.selectEngine(id) }, onOpenNotes: { [weak app] in app?.notesWindow.show() }, onClose: { [weak self] in self?.hide() })
             .environmentObject(Store.shared)
             .environmentObject(app.meeting)
         let host = NSHostingView(rootView: root)
@@ -127,6 +127,7 @@ final class HubController {
 // MARK: - root
 struct HubView: View {
     var onEngineChange: (String) -> Void
+    var onOpenNotes: () -> Void
     var onClose: () -> Void
     @State private var tab = ["notes": 0, "detail": 0, "words": 1, "mind": 2, "me": 3][ProcessInfo.processInfo.environment["VOICEPET_DEMO_TAB"] ?? "notes"] ?? 0
     @Namespace private var ns
@@ -147,7 +148,7 @@ struct HubView: View {
             .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 6)
             Group {
                 switch tab {
-                case 0: NotesView()
+                case 0: NotesLaunchView(onOpen: onOpenNotes)
                 case 1: WordsView()
                 case 2: MindView()
                 default: MeView(onEngineChange: onEngineChange)
@@ -187,309 +188,14 @@ struct HubView: View {
 }
 
 // MARK: - Notes
-struct NotesView: View {
-    @EnvironmentObject var store: Store
-    @EnvironmentObject var meeting: MeetingRecorder
-    @State private var selectedID: UUID? = ProcessInfo.processInfo.environment["VOICEPET_DEMO_TAB"] == "detail" ? Store.shared.notes.first?.id : nil
-
+struct NotesLaunchView: View {
+    var onOpen: () -> Void
     var body: some View {
-        if let id = selectedID, let note = store.notes.first(where: { $0.id == id }) {
-            NoteDetail(note: note) { selectedID = nil }
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    recordCard
-                    if Summarizer.active == nil {
-                        HStack(spacing: 8) {
-                            Image(systemName: "key").foregroundStyle(Color.petAccent)
-                            Text("For summaries, add a Claude key in the Me tab. Transcripts work without it.")
-                                .font(.system(size: 11.5, design: .rounded)).foregroundStyle(Color.petMuted)
-                        }.padding(.horizontal, 4)
-                    }
-                    if store.notes.isEmpty {
-                        Text("Your notes will live here.\nStart one before a call and I'll listen to both sides.")
-                            .foregroundStyle(Color.petMuted).multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity).padding(.top, 30)
-                    }
-                    ForEach(store.notes) { note in
-                        NoteRow(note: note).contentShape(Rectangle()).onTapGesture { selectedID = note.id }
-                    }
-                }
-                .padding(.horizontal, 16).padding(.bottom, 16).padding(.top, 8)
-            }
-        }
-    }
-
-    var recordCard: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle().fill(Color.petAccentSoft).frame(width: 46, height: 46)
-                if meeting.isRecording {
-                    Circle().fill(Color.petAccent).frame(width: 14, height: 14)
-                        .modifier(Pulse())
-                } else if meeting.isProcessing {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "waveform").font(.system(size: 18, weight: .bold)).foregroundStyle(Color.petAccent)
-                }
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                if meeting.isRecording {
-                    Text("Listening · \(mmss(meeting.elapsed))").font(.system(size: 15, weight: .bold, design: .rounded))
-                    Text("You and your call. Nothing leaves this Mac.").foregroundStyle(Color.petMuted).font(.system(size: 11.5, design: .rounded))
-                } else if meeting.isProcessing {
-                    Text("Writing your notes…").font(.system(size: 15, weight: .bold, design: .rounded))
-                    Text("Transcribing, sorting speakers, summarizing.").foregroundStyle(Color.petMuted).font(.system(size: 11.5, design: .rounded))
-                } else {
-                    Text("Take notes").font(.system(size: 15, weight: .bold, design: .rounded))
-                    Text("Start before a call. I'll hear both sides.").foregroundStyle(Color.petMuted).font(.system(size: 11.5, design: .rounded))
-                }
-            }
-            Spacer()
-            if meeting.isRecording {
-                Button("Stop") { meeting.stop() }.buttonStyle(Pill(filled: true))
-            } else if !meeting.isProcessing {
-                Button("Start") { meeting.start() }.buttonStyle(Pill(filled: true))
-            }
-        }
-        .card()
-    }
-}
-
-struct Pulse: ViewModifier {
-    @State private var on = false
-    func body(content: Content) -> some View {
-        content.scaleEffect(on ? 1.25 : 0.85).opacity(on ? 1 : 0.6)
-            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: on)
-            .onAppear { on = true }
-    }
-}
-
-func mmss(_ t: Double) -> String { String(format: "%d:%02d", Int(t) / 60, Int(t) % 60) }
-
-struct NoteRow: View {
-    var note: Note
-    @State private var hover = false
-    var people: Int { Set(note.segments.map { $0.speaker }).count }
-    var body: some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 6).fill(note.status == "ready" ? Color.petAccent : Color.petAccentSoft).frame(width: 4, height: 34)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(note.title).font(.system(size: 14, weight: .semibold, design: .rounded)).lineLimit(1)
-                Text(subtitle).font(.system(size: 11.5, design: .rounded)).foregroundStyle(Color.petMuted)
-            }
-            Spacer()
-            if note.status == "processing" { ProgressView().controlSize(.small) }
-            else if note.status == "failed" { Image(systemName: "exclamationmark.circle").foregroundStyle(.orange) }
-            else if note.status == "recording" { Circle().fill(Color.petAccent).frame(width: 8, height: 8).modifier(Pulse()) }
-            else if note.summary.isEmpty { Image(systemName: "pencil.and.outline").foregroundStyle(Color.petMuted).help("No notes written yet") }
-            else { Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold)).foregroundStyle(Color.petAccentSoft) }
-        }
-        .padding(.horizontal, 14).padding(.vertical, 11)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.white.opacity(hover ? 1 : 0.75)))
-        .shadow(color: Color.petAccent.opacity(hover ? 0.12 : 0), radius: 10, y: 4)
-        .scaleEffect(hover ? 1.01 : 1)
-        .animation(.spring(duration: 0.25), value: hover)
-        .onHover { hover = $0 }
-    }
-    var subtitle: String {
-        var parts = [note.date.formatted(date: .abbreviated, time: .shortened)]
-        if note.duration > 0 { parts.append(mmss(note.duration)) }
-        if people > 1 { parts.append("\(people) people") }
-        if note.status == "processing" { parts.append("writing…") }
-        return parts.joined(separator: " · ")
-    }
-}
-
-struct NoteDetail: View {
-    @EnvironmentObject var store: Store
-    var note: Note
-    var back: () -> Void
-    @State private var title = ""
-    @State private var renaming: String?
-    @State private var newName = ""
-    @State private var confirmDelete = false
-    @State private var writing = false
-    @State private var copied: String?
-    @FocusState private var titleFocused: Bool
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button { back() } label: { Label("Notes", systemImage: "chevron.left") }.buttonStyle(.plain).foregroundStyle(Color.petMuted)
-                Spacer()
-                if writing { ProgressView().controlSize(.small); Text("writing…").foregroundStyle(Color.petMuted).font(.system(size: 11.5, design: .rounded)) }
-            }
-            .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 6)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    TextField("Title", text: $title)
-                        .textFieldStyle(.plain).font(.system(size: 20, weight: .bold, design: .rounded))
-                        .focused($titleFocused)
-                        .onChange(of: title) { _, v in
-                            guard v != note.title else { return }
-                            var n = note; n.title = v; store.upsert(n)
-                        }
-                    Text(meta).font(.system(size: 11.5, design: .rounded)).foregroundStyle(Color.petMuted)
-
-                    // copy row
-                    HStack(spacing: 8) {
-                        copyPill("Copy notes", key: "notes", text: note.summary, disabled: note.summary.isEmpty)
-                        copyPill("Copy transcript", key: "transcript", text: NoteProcessor.transcriptText(note), disabled: note.segments.isEmpty)
-                        copyPill("Copy all", key: "all", text: everything, disabled: note.segments.isEmpty)
-                    }
-
-                    if let e = note.error {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "exclamationmark.bubble").foregroundStyle(.orange)
-                            Text(e).font(.system(size: 12, design: .rounded))
-                        }.card()
-                    }
-
-                    // notes
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            SectionTitle(text: "Notes")
-                            Spacer()
-                            if !note.segments.isEmpty {
-                                Button(note.summary.isEmpty ? "Write notes" : "Rewrite") { rewrite() }
-                                    .buttonStyle(Pill(filled: note.summary.isEmpty)).disabled(writing)
-                            }
-                        }
-                        if note.summary.isEmpty {
-                            Text(Summarizer.active == nil ? "No note writer yet. Add a Claude key in the Me tab, then press Write notes." : "Press Write notes and I'll summarize the transcript.")
-                                .font(.system(size: 12, design: .rounded)).foregroundStyle(Color.petMuted)
-                        } else {
-                            NotesText(text: note.summary)
-                        }
-                    }.card()
-
-                    // transcript
-                    if !note.segments.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            SectionTitle(text: "Who")
-                            Flow(spacing: 6) {
-                                ForEach(speakers, id: \.self) { s in
-                                    Button { renaming = s; newName = note.name(for: s) } label: {
-                                        HStack(spacing: 6) {
-                                            Circle().fill(Color.speaker(s)).frame(width: 9, height: 9)
-                                            Text(note.name(for: s)).font(.system(size: 12, weight: .semibold, design: .rounded))
-                                            Image(systemName: "pencil").font(.system(size: 8, weight: .bold)).foregroundStyle(Color.petMuted)
-                                        }
-                                        .padding(.horizontal, 10).padding(.vertical, 6)
-                                        .background(Capsule().fill(Color.speaker(s).opacity(0.15)))
-                                    }.buttonStyle(.plain).help("Rename")
-                                    .popover(isPresented: Binding(get: { renaming == s }, set: { if !$0 { renaming = nil } })) {
-                                        HStack {
-                                            TextField("Name", text: $newName).textFieldStyle(.roundedBorder).frame(width: 150).onSubmit { rename(s) }
-                                            Button("OK") { rename(s) }.buttonStyle(Pill())
-                                        }.padding(12)
-                                    }
-                                }
-                            }
-                            SectionTitle(text: "Transcript").padding(.top, 6)
-                            ForEach(note.segments) { seg in
-                                HStack(alignment: .top, spacing: 10) {
-                                    VStack(alignment: .trailing, spacing: 1) {
-                                        Text(note.name(for: seg.speaker)).font(.system(size: 11, weight: .bold, design: .rounded)).foregroundStyle(Color.speaker(seg.speaker))
-                                        Text(mmss(seg.start)).font(.system(size: 9.5, design: .rounded).monospacedDigit()).foregroundStyle(Color.petMuted.opacity(0.7))
-                                    }.frame(width: 72, alignment: .trailing)
-                                    Text(seg.text).textSelection(.enabled).lineSpacing(2)
-                                }
-                            }
-                        }.card()
-                    }
-
-                    HStack {
-                        Spacer()
-                        Button {
-                            if confirmDelete { store.delete(note); back() } else { confirmDelete = true; DispatchQueue.main.asyncAfter(deadline: .now() + 3) { confirmDelete = false } }
-                        } label: { Text(confirmDelete ? "Delete for real?" : "Delete").foregroundStyle(confirmDelete ? .red : Color.petMuted) }
-                        .buttonStyle(.plain).font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                    }.padding(.top, 4)
-                }
-                .padding(.horizontal, 16).padding(.bottom, 16).padding(.top, 4)
-            }
-        }
-        .onAppear { title = note.title; DispatchQueue.main.async { titleFocused = false; NSApp.keyWindow?.makeFirstResponder(nil) } }
-        .onChange(of: note.title) { _, v in if v != title { title = v } }
-    }
-
-    var meta: String {
-        var parts = [note.date.formatted(date: .long, time: .shortened)]
-        if note.duration > 0 { parts.append(mmss(note.duration)) }
-        let words = note.segments.reduce(0) { $0 + $1.text.split(separator: " ").count }
-        if words > 0 { parts.append("\(words) words") }
-        return parts.joined(separator: " · ")
-    }
-    var speakers: [String] {
-        var seen: [String] = []
-        for s in note.segments where !seen.contains(s.speaker) { seen.append(s.speaker) }
-        return seen
-    }
-    var everything: String {
-        var out = "# \(note.title)\n\(note.date.formatted(date: .long, time: .shortened)) · \(mmss(note.duration))\n\n"
-        if !note.summary.isEmpty { out += note.summary + "\n\n" }
-        out += "## Transcript\n" + note.segments.map { "[\(mmss($0.start))] \(note.name(for: $0.speaker)): \($0.text)" }.joined(separator: "\n")
-        return out
-    }
-    func copyPill(_ label: String, key: String, text: String, disabled: Bool) -> some View {
-        Button {
-            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
-            copied = key
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { if copied == key { copied = nil } }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: copied == key ? "checkmark" : "doc.on.doc").font(.system(size: 10, weight: .bold))
-                Text(copied == key ? "Copied" : label)
-            }
-        }
-        .buttonStyle(Pill(filled: false)).disabled(disabled).opacity(disabled ? 0.45 : 1)
-    }
-    func rename(_ s: String) {
-        var n = note; n.speakerNames[s] = newName.trimmingCharacters(in: .whitespaces); store.upsert(n); renaming = nil
-    }
-    func rewrite() {
-        writing = true
-        Task {
-            let n = await NoteProcessor.summarize(note)
-            await MainActor.run { store.upsert(n); writing = false }
-        }
-    }
-}
-
-/// Renders the small Markdown subset the note writer produces: ## headings, **bold**, - bullets, - [ ] tasks.
-struct NotesText: View {
-    var text: String
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, raw in
-                let line = String(raw).trimmingCharacters(in: .whitespaces)
-                if line.isEmpty {
-                    Spacer().frame(height: 2)
-                } else if line.hasPrefix("#") {
-                    SectionTitle(text: line.trimmingCharacters(in: CharacterSet(charactersIn: "# "))).padding(.top, 6)
-                } else if line.hasPrefix("- [ ]") || line.hasPrefix("- [x]") || line.hasPrefix("- [X]") {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: line.hasPrefix("- [ ]") ? "circle" : "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.petAccent).padding(.top, 2)
-                        inline(String(line.dropFirst(5)))
-                    }
-                } else if line.hasPrefix("- ") || line.hasPrefix("• ") {
-                    HStack(alignment: .top, spacing: 8) {
-                        Circle().fill(Color.petAccent).frame(width: 6, height: 6).padding(.top, 6)
-                        inline(String(line.dropFirst(2)))
-                    }
-                } else {
-                    inline(line)
-                }
-            }
-        }
-        .textSelection(.enabled)
-    }
-    func inline(_ s: String) -> Text {
-        if let a = try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) { return Text(a) }
-        return Text(s)
+        VStack(spacing: 12) {
+            Image(systemName: "note.text").font(.system(size: 28, weight: .bold)).foregroundStyle(Color.petAccent)
+            Text("Notes live in their own window now.").font(.system(size: 14, weight: .semibold, design: .rounded))
+            Button("Open Ribbit notes") { onOpen() }.buttonStyle(Pill(filled: true))
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
