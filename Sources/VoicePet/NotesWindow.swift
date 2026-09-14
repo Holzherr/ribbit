@@ -101,6 +101,7 @@ extension NotesWindow {
     });
     const check = async (name, fn) => { try { const d = await fn(); d === true ? pass(name) : fail(name, d); } catch (e) { fail(name, e.message); } };
     let notes = [];
+    let settings = null;
     try {
       await check('notes.list', async () => {
         const r = await call('notes.list');
@@ -131,8 +132,21 @@ extension NotesWindow {
       await check('settings.get', async () => {
         const r = await call('settings.get');
         if (!r.ok) return 'error ' + r.error;
+        settings = r.payload;
+        return typeof settings.speechEngine === 'string' && typeof settings.showFrog === 'boolean' ? true : 'got ' + JSON.stringify(settings);
+      });
+      await check('settings.set', async () => {
+        if (!settings) return 'no settings to set';
+        const r = await call('settings.set', { summaryEngine: settings.summaryEngine });
+        if (!r.ok) return 'error ' + r.error;
+        return r.payload.summaryEngine === settings.summaryEngine ? true : 'summaryEngine ' + r.payload.summaryEngine + ' != ' + settings.summaryEngine;
+      });
+      await check('session.status', async () => {
+        const r = await call('session.status');
+        if (!r.ok) return 'error ' + r.error;
         const s = r.payload;
-        return typeof s.speechEngine === 'string' && typeof s.showFrog === 'boolean' ? true : 'got ' + JSON.stringify(s);
+        if (s.recording !== false) return 'expected recording:false, got ' + JSON.stringify(s);
+        return typeof s.elapsed === 'number' ? true : 'elapsed is not a number: ' + JSON.stringify(s);
       });
       await check('unknown command', async () => {
         const r = await call('nope.nope');
