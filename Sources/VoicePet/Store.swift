@@ -28,6 +28,11 @@ struct Segment: Codable, Identifiable, Equatable {
     var text: String
 }
 
+struct Attendee: Codable, Equatable {
+    var name: String
+    var email: String? = nil
+}
+
 struct Note: Codable, Identifiable, Equatable {
     var id = UUID()
     var date = Date()
@@ -36,8 +41,36 @@ struct Note: Codable, Identifiable, Equatable {
     var summary: String = ""
     var segments: [Segment] = []
     var speakerNames: [String: String] = ["me": "Me"]
-    var status: String = "recording"   // recording | processing | ready | failed
+    var status: String = "recording"   // recording | processing | ready | failed | enhancing
     var error: String? = nil
+    // Ribbit additions. Old notes.json files lack these keys, hence the custom decoder.
+    var jots: String = ""
+    var enhanced: String = ""
+    var template: String = "default"
+    var attendees: [Attendee] = []
+    var calendarEventID: String? = nil
+
+    init() {}
+
+    enum CodingKeys: String, CodingKey { case id, date, title, duration, summary, segments, speakerNames, status, error, jots, enhanced, template, attendees, calendarEventID }
+
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        date = try c.decode(Date.self, forKey: .date)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? "Untitled"
+        duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        segments = try c.decodeIfPresent([Segment].self, forKey: .segments) ?? []
+        speakerNames = try c.decodeIfPresent([String: String].self, forKey: .speakerNames) ?? ["me": "Me"]
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "ready"
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        jots = try c.decodeIfPresent(String.self, forKey: .jots) ?? ""
+        enhanced = try c.decodeIfPresent(String.self, forKey: .enhanced) ?? ""
+        template = try c.decodeIfPresent(String.self, forKey: .template) ?? "default"
+        attendees = try c.decodeIfPresent([Attendee].self, forKey: .attendees) ?? []
+        calendarEventID = try c.decodeIfPresent(String.self, forKey: .calendarEventID)
+    }
 
     func name(for speaker: String) -> String {
         if let n = speakerNames[speaker] { return n }
