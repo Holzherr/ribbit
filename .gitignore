@@ -13,3 +13,6 @@ web/src/main.shark.js
 web/tools/shark_blender.py
 .signing/
 .DS_Store
+web/notes/node_modules/
+web/notes/dist/
+web/notes/storybook-static/

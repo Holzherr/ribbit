@@ -1,0 +1,41 @@
+@import 'tailwindcss';
+
+/* Design tokens. Mirrors DESIGN.md; every component takes colour and radius from here. */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  --color-brand: #1f9d55;
+  --color-brand-hover: #17803f;
+  --color-brand-soft: #e9f7ee;
+  --color-brand-ink: #14683a;
+
+  --color-ink: #0f172a;
+  --color-body: #475569;
+  --color-muted: #64748b;
+  --color-faint: #94a3b8;
+  --color-line: #e2e8f0;
+  --color-line-soft: #f1f5f9;
+  --color-surface: #ffffff;
+  --color-canvas: #f8fafc;
+  --color-well: #eef2f7;
+
+  --color-rec: #dc2626;
+  --color-rec-soft: #fee2e2;
+  --color-danger: #b91c1c;
+  --color-warn: #b45309;
+  --color-warn-soft: #fffbeb;
+
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-pill: 999px;
+}
+
+@layer base {
+  body {
+    @apply bg-canvas text-ink font-sans antialiased text-[14px];
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  button { @apply cursor-default; }
+  textarea, input, [data-selectable] { -webkit-user-select: text; user-select: text; }
+}
