@@ -1,6 +1,6 @@
 ---
 name: Ribbit Notes
-description: A notes window that stays out of the way during a call. Near-white canvas, slate ink, one green for the primary action, red only for the recording dot. Dense rows, system font, tabular timestamps.
+description: A notes window that stays out of the way during a call. Near-white canvas, slate ink, one green for the primary action, red only for recording and failure states. Dense rows, system font, tabular timestamps.
 colors:
   brand: '#1f9d55'
   brand-hover: '#17803f'
@@ -30,6 +30,7 @@ rounded: { card: '12px', control: '8px', pill: '999px' }
 spacing: { row-pad: '10px 12px', screen-pad: '16px', sidebar: '280px', window-min: '720x480', window-default: '960x640' }
 rules:
   - One brand-filled button per screen (Start / Stop / Enhance).
-  - Red is the recording dot and nothing else.
+  - White text on brand uses brand-hover (#17803f) for AA contrast.
+  - rec family (rec, rec-soft) is for recording and failure states only.
   - Speaker chips are outlined, tinted by speaker index (me = brand, s1 = sky, s2 = violet, s3 = amber, s4+ = slate).
 ---
