@@ -23,6 +23,10 @@ Design intent: cute, round, soft toon shading with a dark outline, squash-and-st
 - Every state change the pet shows goes through `panel.js("pet.setState('…')")`.
 - Permissions: Microphone, Speech Recognition, Accessibility, and System Audio Recording (notes). Strings live in `Resources/Info.plist`.
 - Debug flags in `main.swift` run without the UI. Use them to test engines with a WAV instead of talking.
+- `NotesWindow` + `Bridge` host `web/notes` (React). Commands and events are typed once in `web/notes/src/bridge/types.ts`; `Bridge.swift` must handle every command listed there. Add a command by editing both, then `createMockBridge` in `mock.ts` so stories keep working.
+- Every visual piece in `web/notes` is a Storybook brick (props in, callbacks out). Screens take a `Bridge`. Conventions: CSF3, `satisfies Meta`, `title: 'Shared/UI/X'` or `'<Feature>/X'`, `docs.description.component` describing the layout.
+- Build with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
+- `--bridge-selftest` (run with `VOICEPET_DEMO_DATA=1`) drives the whole bridge headlessly — prints `SELFTEST` lines per command/event and exits 0/1; use it to check a build without opening the notes window.
 
 ## Rules
 

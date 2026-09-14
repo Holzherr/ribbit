@@ -6,6 +6,23 @@
 
 Hold **fn** and talk. The frog types what you say into whatever is in front of you: a Claude Code or Codex prompt, a terminal, an email. Let go and the text is there. Start it before a call and it takes the notes: who said what, and a summary to read afterwards. Hold **right ⌥ Option** and talk to it. It answers out loud in an old man's voice, remembers what you tell it, and keeps you company while you work. It is fat, lazy, a little sarcastic, and fond of flies.
 
+## Ribbit (this fork)
+
+Ribbit adds a Granola-style notes window on top of Frog. The engine is Frog's; the UI is React + Storybook in `web/notes`, hosted in a native window and talking to Swift over a JSON bridge (`Sources/VoicePet/Bridge.swift` ⇄ `web/notes/src/bridge/`).
+
+Open it from the menu bar (Ribbit notes window, ⌘N) or launch with `--notes`.
+
+Develop the UI without the app:
+
+    cd web/notes && npm install
+    npm run storybook      # bricks on :6007, mock bridge
+    npm run dev            # the window in a browser on :5211 (no native bridge; use stories for data)
+    npm test               # models and transports
+
+Build the app: `export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer && ./build.sh`. The default Command Line Tools ship an older Swift than `Package.swift` requires.
+
+Run `VOICEPET_DEMO_DATA=1 build/VoicePet.app/Contents/MacOS/VoicePet --bridge-selftest` to check the bridge end-to-end without opening the UI; it prints `SELFTEST` lines for each command/event it exercises and exits 0 on success, 1 on failure.
+
 Everything runs on your Mac. Speech recognition, speaker labels, and the frog's brain are local models, downloaded once. Nothing you say leaves the machine.
 
 ## In its own words
