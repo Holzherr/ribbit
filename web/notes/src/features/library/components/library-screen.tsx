@@ -6,8 +6,8 @@ import { Mic, Settings } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { NoteList } from './note-list';
 
-/** Two-pane window: 280px sidebar (wordmark, Start button, list) and a content pane. Loads notes over the bridge and re-renders on note.updated. `children` is the content pane. */
-export function LibraryScreen({ bridge, selectedId, onSelect, onStart, onSettings, children }: { bridge: Bridge; selectedId: string | null; onSelect: (id: string) => void; onStart: () => void; onSettings: () => void; children?: ReactNode }) {
+/** Two-pane window: 280px sidebar (wordmark, Start button, list) and a content pane. Loads notes over the bridge and re-renders on note.updated. `children` is the content pane; `banner` renders above it while a session is recording. */
+export function LibraryScreen({ bridge, selectedId, onSelect, onStart, onSettings, banner, children }: { bridge: Bridge; selectedId: string | null; onSelect: (id: string) => void; onStart: () => void; onSettings: () => void; banner?: ReactNode; children?: ReactNode }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [query, setQuery] = useState('');
 
@@ -28,8 +28,11 @@ export function LibraryScreen({ bridge, selectedId, onSelect, onStart, onSetting
         <div className="px-3 pt-3"><Button block onClick={onStart}><Mic /> Start notes</Button></div>
         <div className="min-h-0 flex-1"><NoteList notes={notes} selectedId={selectedId} onSelect={onSelect} query={query} onQuery={setQuery} /></div>
       </aside>
-      <main className="min-w-0 overflow-y-auto">
-        {children ?? <EmptyState icon={<Mic />} title="Pick a note" body="Or start a session before your next call." />}
+      <main className="flex min-w-0 flex-col">
+        {banner}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {children ?? <EmptyState icon={<Mic />} title="Pick a note" body="Or start a session before your next call." />}
+        </div>
       </main>
     </div>
   );
