@@ -23,6 +23,7 @@ final class StatusBar: NSObject, NSMenuDelegate {
         let visible = app.panel.isVisible
         menu.addItem(make(visible ? "Hide the frog" : "Show the frog", #selector(toggleVisible), key: "h"))
         menu.addItem(make("Notes & settings…", #selector(openHub), key: ","))
+        menu.addItem(make("Ribbit notes window", #selector(openNotes), key: "n"))
         menu.addItem(.separator())
         let wander = make("Wanders around", #selector(toggleWander), key: "")
         wander.state = UserDefaults.standard.bool(forKey: "wander") ? .on : .off
@@ -48,6 +49,7 @@ final class StatusBar: NSObject, NSMenuDelegate {
         if app.panel.isVisible { app.panel.orderOut(nil) } else { app.panel.show() }
     }
     @objc private func openHub() { app?.hub.show() }
+    @objc private func openNotes() { app?.notesWindow.show() }
     @objc private func toggleWander() {
         UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: "wander"), forKey: "wander"); app?.applyWanderPref()
     }

@@ -3,6 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 (cd web && npm run build --silent)
+(cd web/notes && npm run build --silent)
 swift build -c release 2>&1 | grep -E "error|warning: var|Build complete" || true
 APP=build/VoicePet.app
 rm -rf "$APP"
@@ -10,6 +11,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/web"
 cp Resources/Info.plist "$APP/Contents/"
 cp .build/release/VoicePet "$APP/Contents/MacOS/"
 cp -R web/dist/. "$APP/Contents/Resources/web/"
+mkdir -p "$APP/Contents/Resources/notes" && cp web/notes/dist/index.html "$APP/Contents/Resources/notes/"
 # binary frameworks from dependencies (llama.cpp for the on-device brain)
 mkdir -p "$APP/Contents/Frameworks"
 for fw in $(find .build -type d -name "*.framework" -path "*macos*" 2>/dev/null; find .build/artifacts -type d -name "*.framework" 2>/dev/null); do

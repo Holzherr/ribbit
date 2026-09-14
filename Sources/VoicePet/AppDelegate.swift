@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let paster = Paster()
     lazy var meeting = MeetingRecorder(mic: recorder)
     lazy var hub = HubController(app: self)
+    lazy var notesWindow = NotesWindow(app: self)
     lazy var wander = Wander(panel: panel)
     let voice = PetVoice()
     let brain = Brain()
@@ -54,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.panel.js("pet.setState('\(s)')")
             if s == "noting" { self?.voice.notesStarted() }
             if s == "done", let n = Store.shared.notes.first { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self?.voice.notesReady(title: n.title) } }
+            if s == "noting" || s == "done" || s == "confused", let id = self?.meeting.currentNoteID ?? Store.shared.notes.first?.id, let n = Store.shared.notes.first(where: { $0.id == id }) { self?.notesWindow.bridge.send(event: "note.updated", payload: n) }
         }
         meeting.engineProvider = { [weak self] in self?.engine ?? AppleTranscriber() }
         meeting.dictationActive = { [weak self] in self?.listening ?? false }
@@ -68,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voice.onTalking = { [weak self] on in self?.panel.js("pet.setTalking && pet.setTalking(\(on))") }
         if CommandLine.arguments.contains("--demo") { runDemo() }
         if CommandLine.arguments.contains("--hub") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.hub.show() } }
+        if CommandLine.arguments.contains("--notes") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.notesWindow.show() } }
     }
 
     func applyBrainPref() { Task { await brain.prepare() } }
