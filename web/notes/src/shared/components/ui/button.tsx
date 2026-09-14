@@ -7,7 +7,7 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        brand: 'rounded-control bg-brand text-white hover:bg-brand-hover',
+        brand: 'rounded-control bg-brand-hover text-white hover:bg-brand-ink',
         ghost: 'rounded-control border border-line bg-surface text-ink hover:bg-line-soft',
         soft: 'rounded-control bg-line-soft text-ink hover:bg-line',
         text: 'rounded-control text-brand-ink hover:bg-brand-soft',
