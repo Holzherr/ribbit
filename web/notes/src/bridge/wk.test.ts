@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWKBridge } from './wk';
 
-declare global { interface Window { webkit?: { messageHandlers: { ribbit: { postMessage: (m: unknown) => void } } }; ribbit?: { receive: (m: unknown) => void } } }
-
 describe('createWKBridge', () => {
   beforeEach(() => { delete window.webkit; delete window.ribbit; });
 
