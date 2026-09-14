@@ -55,4 +55,13 @@ describe('createMockBridge', () => {
     const b = createMockBridge(FIXTURE_NOTES);
     expect((await b.call('session.status', undefined)).processing).toBe(false);
   });
+
+  it('emits note.deleted when a note is deleted', async () => {
+    const b = createMockBridge(FIXTURE_NOTES);
+    const h = vi.fn();
+    b.on('note.deleted', h);
+    await b.call('notes.delete', { id: 'n-ready' });
+    expect(h).toHaveBeenCalledWith({ id: 'n-ready' });
+    expect(b.notes.some(n => n.id === 'n-ready')).toBe(false);
+  });
 });

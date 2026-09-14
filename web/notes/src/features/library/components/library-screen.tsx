@@ -6,7 +6,7 @@ import { Mic, Settings } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { NoteList } from './note-list';
 
-/** Two-pane window: 280px sidebar (wordmark, Start button, list) and a content pane. Loads notes over the bridge and re-renders on note.updated. `children` is the content pane; `banner` renders above it while a session is recording. */
+/** Two-pane window: 280px sidebar (wordmark, Start button, list) and a content pane. Loads notes over the bridge and re-renders on note.updated / note.deleted. `children` is the content pane; `banner` renders above it while a session is recording. */
 export function LibraryScreen({ bridge, selectedId, onSelect, onStart, onSettings, banner, children }: { bridge: Bridge; selectedId: string | null; onSelect: (id: string) => void; onStart: () => void; onSettings: () => void; banner?: ReactNode; children?: ReactNode }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [query, setQuery] = useState('');
@@ -15,7 +15,8 @@ export function LibraryScreen({ bridge, selectedId, onSelect, onStart, onSetting
     let alive = true;
     bridge.call('notes.list', undefined).then(n => { if (alive) setNotes(n); });
     const off = bridge.on('note.updated', n => setNotes(prev => prev.some(x => x.id === n.id) ? prev.map(x => x.id === n.id ? { ...n, segments: [] } : x) : [{ ...n, segments: [] }, ...prev]));
-    return () => { alive = false; off(); };
+    const offDeleted = bridge.on('note.deleted', ({ id }) => setNotes(prev => prev.filter(x => x.id !== id)));
+    return () => { alive = false; off(); offDeleted(); };
   }, [bridge]);
 
   return (

@@ -25,7 +25,7 @@ export function createMockBridge(seed: Note[] = [], opts: { latency?: number } =
         'notes.list': () => notes.map(n => ({ ...n, segments: [] })),
         'notes.get': ({ id }) => structuredClone(find(id)),
         'notes.update': ({ id, patch }) => { const n = find(id); Object.assign(n, patch); bridge.emit('note.updated', structuredClone(n)); return structuredClone(n); },
-        'notes.delete': ({ id }) => { const i = notes.findIndex(x => x.id === id); if (i >= 0) notes.splice(i, 1); return 'ok'; },
+        'notes.delete': ({ id }) => { notes.splice(notes.indexOf(find(id)), 1); bridge.emit('note.deleted', { id }); return 'ok'; },
         'session.start': ({ title, calendarEventID }) => {
           if (session) throw new Error("Can't start: already recording");
           if (processingNoteId) throw new Error("Can't start: still processing the last note");

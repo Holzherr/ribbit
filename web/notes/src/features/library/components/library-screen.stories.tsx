@@ -8,7 +8,7 @@ import { LibraryScreen } from './library-screen';
 const meta = {
   title: 'Library/LibraryScreen',
   component: LibraryScreen,
-  parameters: { layout: 'fullscreen', docs: { description: { component: 'Two-pane window: 280px sidebar (wordmark, Start button, list) and a content pane. Loads notes over the bridge on mount and re-renders on note.updated.' } } },
+  parameters: { layout: 'fullscreen', docs: { description: { component: 'Two-pane window: 280px sidebar (wordmark, Start button, list) and a content pane. Loads notes over the bridge on mount and re-renders on note.updated / note.deleted.' } } },
 } satisfies Meta<typeof LibraryScreen>;
 export default meta;
 type Story = StoryObj<typeof meta>;

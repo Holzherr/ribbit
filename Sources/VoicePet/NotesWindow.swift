@@ -152,6 +152,10 @@ extension NotesWindow {
         const r = await call('nope.nope');
         return r.ok === false ? true : 'expected ok:false, got ' + JSON.stringify(r);
       });
+      await check('note.deleted event accepted', async () => {
+        window.ribbit.receive({ type: 'note.deleted', payload: { id: 'nope' } });
+        return true;
+      });
       await new Promise(r => setTimeout(r, 1500));
       await check('sidebar renders bridge data', async () => {
         if (!first) return 'no note title to look for';

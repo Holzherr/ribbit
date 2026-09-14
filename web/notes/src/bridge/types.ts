@@ -55,6 +55,7 @@ export interface Events {
   'session.tick': { noteId: string; elapsed: number; level: number };
   'transcript.segment': { noteId: string; segment: Segment };
   'note.updated': Note;
+  'note.deleted': { id: string };
   'call.detected': { app: string; event?: CalendarEvent };
   'error': { message: string };
 }

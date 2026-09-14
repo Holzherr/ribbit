@@ -33,6 +33,8 @@ export function App({ bridge }: { bridge: Bridge }) {
 
   useEffect(() => bridge.on('note.updated', n => setSession(prev => prev && sessionEndedBy(prev.noteId, n) ? null : prev)), [bridge]);
 
+  useEffect(() => bridge.on('note.deleted', ({ id }) => setSelected(prev => prev === id ? null : prev)), [bridge]);
+
   const start = async () => {
     try {
       const { noteId } = await bridge.call('session.start', {});

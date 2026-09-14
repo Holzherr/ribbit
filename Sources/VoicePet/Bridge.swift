@@ -72,7 +72,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             send(event: "note.updated", payload: note)
             return try json(note)
         case "notes.delete":
-            Store.shared.delete(try find(payload))
+            let note = try find(payload)
+            Store.shared.delete(note)
+            send(event: "note.deleted", payload: ["id": note.id.uuidString])
             return "ok"
         case "session.start":
             let p = payload as? [String: Any]

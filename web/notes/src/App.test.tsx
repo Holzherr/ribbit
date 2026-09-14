@@ -36,3 +36,32 @@ describe('App session bar', () => {
     expect(bridge.notes.some(n => n.status === 'recording')).toBe(false);
   });
 });
+
+describe('App note deletion', () => {
+  it('removes the row and clears the detail pane when a note.deleted event arrives', async () => {
+    const bridge = createMockBridge(FIXTURE_NOTES);
+    render(<App bridge={bridge} />);
+
+    fireEvent.click(await screen.findByText('Cat sitter marketplace kickoff'));
+    expect(await screen.findByDisplayValue('Cat sitter marketplace kickoff')).toBeInTheDocument();
+
+    act(() => { bridge.emit('note.deleted', { id: 'n-ready' }); });
+    expect(await screen.findByText('Pick a note')).toBeInTheDocument();
+    expect(screen.queryByText('Cat sitter marketplace kickoff')).not.toBeInTheDocument();
+    expect(screen.getByText('Dylan hiring sync')).toBeInTheDocument();
+  });
+
+  it('deletes only after the confirm click and drops the note from the sidebar', async () => {
+    const bridge = createMockBridge(FIXTURE_NOTES);
+    render(<App bridge={bridge} />);
+
+    fireEvent.click(await screen.findByText('Cat sitter marketplace kickoff'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete note' }));
+    expect(bridge.notes.some(n => n.id === 'n-ready')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete?' }));
+    await waitFor(() => expect(screen.queryByText('Cat sitter marketplace kickoff')).not.toBeInTheDocument());
+    expect(bridge.notes.some(n => n.id === 'n-ready')).toBe(false);
+    expect(screen.getByText('Pick a note')).toBeInTheDocument();
+  });
+});
