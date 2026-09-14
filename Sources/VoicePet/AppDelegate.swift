@@ -71,6 +71,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--demo") { runDemo() }
         if CommandLine.arguments.contains("--hub") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.hub.show() } }
         if CommandLine.arguments.contains("--notes") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.notesWindow.show() } }
+        if CommandLine.arguments.contains("--bridge-selftest") { runBridgeSelfTest() }
+    }
+
+    /// Debug path for `--bridge-selftest`: exercise the notes bridge end to end, print SELFTEST PASS/FAIL, exit.
+    private func runBridgeSelfTest() {
+        let finish: (Bool, String) -> Void = { ok, suffix in
+            print(ok ? "SELFTEST PASS" : "SELFTEST FAIL\(suffix)")
+            fflush(stdout)
+            exit(ok ? 0 : 1)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { finish(false, " timeout") }
+        notesWindow.show()
+        notesWindow.runSelfTest { ok in finish(ok, "") }
     }
 
     func applyBrainPref() { Task { await brain.prepare() } }
