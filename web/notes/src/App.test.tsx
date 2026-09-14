@@ -20,4 +20,19 @@ describe('App session bar', () => {
     fireEvent.click(screen.getByRole('button', { name: /stop/i }));
     await waitFor(() => expect(screen.queryByText('12:34')).not.toBeInTheDocument());
   });
+
+  it('shows an error and no session bar when Start is rejected because the last note is still processing', async () => {
+    const bridge = createMockBridge(FIXTURE_NOTES);
+    render(<App bridge={bridge} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start notes/i }));
+    await screen.findByRole('button', { name: /stop/i });
+    fireEvent.click(screen.getByRole('button', { name: /stop/i }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /stop/i })).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /start notes/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent("Can't start: still processing the last note");
+    expect(screen.queryByRole('button', { name: /stop/i })).not.toBeInTheDocument();
+    expect(bridge.notes.some(n => n.status === 'recording')).toBe(false);
+  });
 });

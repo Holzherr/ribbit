@@ -41,4 +41,18 @@ describe('createMockBridge', () => {
     await b.call('session.stop', undefined);
     expect((await b.call('notes.get', { id: noteId })).status).toBe('processing');
   });
+
+  it('rejects session.start while recording or while the last note is processing', async () => {
+    const b = createMockBridge([]);
+    await b.call('session.start', {});
+    await expect(b.call('session.start', {})).rejects.toThrow("Can't start: already recording");
+    await b.call('session.stop', undefined);
+    expect((await b.call('session.status', undefined)).processing).toBe(true);
+    await expect(b.call('session.start', {})).rejects.toThrow("Can't start: still processing the last note");
+  });
+
+  it('does not report processing just because a seeded note has a processing status', async () => {
+    const b = createMockBridge(FIXTURE_NOTES);
+    expect((await b.call('session.status', undefined)).processing).toBe(false);
+  });
 });

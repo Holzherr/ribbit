@@ -12,6 +12,7 @@ export function createMockBridge(seed: Note[] = [], opts: { latency?: number } =
   const handlers = new Map<EventType, Set<(p: never) => void>>();
   let settings: Settings = { ...FIXTURE_SETTINGS };
   let session: { noteId: string; startedAt: number } | null = null;
+  let processingNoteId: string | null = null;   // MeetingRecorder.isProcessing: set by session.stop; the mock never finishes processing
   const wait = () => new Promise(r => setTimeout(r, opts.latency ?? 0));
   const find = (id: string) => { const n = notes.find(x => x.id === id); if (!n) throw new Error(`note ${id} not found`); return n; };
 
@@ -26,12 +27,14 @@ export function createMockBridge(seed: Note[] = [], opts: { latency?: number } =
         'notes.update': ({ id, patch }) => { const n = find(id); Object.assign(n, patch); bridge.emit('note.updated', structuredClone(n)); return structuredClone(n); },
         'notes.delete': ({ id }) => { const i = notes.findIndex(x => x.id === id); if (i >= 0) notes.splice(i, 1); return 'ok'; },
         'session.start': ({ title, calendarEventID }) => {
+          if (session) throw new Error("Can't start: already recording");
+          if (processingNoteId) throw new Error("Can't start: still processing the last note");
           const n: Note = { id: `n-${Date.now()}`, date: new Date().toISOString(), title: title ?? 'Untitled', duration: 0, summary: '', segments: [], speakerNames: { me: 'Me' }, status: 'recording', error: null, jots: '', enhanced: '', template: 'default', attendees: [], calendarEventID: calendarEventID ?? null };
           notes.unshift(n); session = { noteId: n.id, startedAt: Date.now() };
           return { noteId: n.id };
         },
-        'session.stop': () => { if (session) { const n = find(session.noteId); n.status = 'processing'; n.duration = (Date.now() - session.startedAt) / 1000; session = null; bridge.emit('note.updated', structuredClone(n)); } return 'ok'; },
-        'session.status': () => ({ recording: !!session, processing: notes.some(n => n.status === 'processing'), noteId: session?.noteId ?? null, elapsed: session ? (Date.now() - session.startedAt) / 1000 : 0 }),
+        'session.stop': () => { if (session) { const n = find(session.noteId); n.status = 'processing'; n.duration = (Date.now() - session.startedAt) / 1000; processingNoteId = n.id; session = null; bridge.emit('note.updated', structuredClone(n)); } return 'ok'; },
+        'session.status': () => ({ recording: !!session, processing: processingNoteId !== null, noteId: session?.noteId ?? null, elapsed: session ? (Date.now() - session.startedAt) / 1000 : 0 }),
         'calendar.upcoming': () => FIXTURE_EVENTS,
         'calendar.authorize': () => ({ granted: true }),
         'enhance.run': ({ id, template }) => { const n = find(id); n.template = template; n.enhanced = `# ${n.title}\n\n(mock enhance with template ${template})\n\n${n.jots}`; n.status = 'ready'; bridge.emit('note.updated', structuredClone(n)); return { enhanced: n.enhanced }; },

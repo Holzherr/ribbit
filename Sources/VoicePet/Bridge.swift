@@ -76,8 +76,21 @@ final class Bridge: NSObject, WKScriptMessageHandler {
             return "ok"
         case "session.start":
             let p = payload as? [String: Any]
-            app.meeting.start()
-            guard let id = app.meeting.currentNoteID, var note = Store.shared.notes.first(where: { $0.id == id }) else { throw BridgeError.message("Could not start (dictation active or already recording)") }
+            let meeting = app.meeting
+            // MeetingRecorder.start() returns silently when it can't record, leaving currentNoteID on the
+            // previous note, so name the reason up front and verify a new recording afterwards.
+            if meeting.isRecording { throw BridgeError.message("Can't start: already recording") }
+            if meeting.isProcessing { throw BridgeError.message("Can't start: still processing the last note") }
+            if meeting.dictationActive() { throw BridgeError.message("Can't start: dictation is active") }
+            let previousID = meeting.currentNoteID
+            let existingIDs = Set(Store.shared.notes.map(\.id))
+            meeting.start()
+            guard meeting.isRecording, let id = meeting.currentNoteID, id != previousID, var note = Store.shared.notes.first(where: { $0.id == id }) else {
+                // start() stores a new failed note, without recording, when it can't create the audio files.
+                let failed = Store.shared.notes.first { !existingIDs.contains($0.id) }
+                if let failed { send(event: "note.updated", payload: failed) }
+                throw BridgeError.message("Can't start: \(failed?.error ?? "the recorder did not start")")
+            }
             if let t = p?["title"] as? String, !t.isEmpty { note.title = t }
             if let e = p?["calendarEventID"] as? String { note.calendarEventID = e }
             Store.shared.upsert(note)
