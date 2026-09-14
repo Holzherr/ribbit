@@ -4,7 +4,16 @@ set -euo pipefail
 cd "$(dirname "$0")"
 (cd web && npm run build --silent)
 (cd web/notes && npm run build --silent)
-swift build -c release 2>&1 | grep -E "error|warning: var|Build complete" || true
+# Keep the full log, print the interesting lines, and stop on a failed build instead of
+# packaging whatever stale binary .build/release still holds.
+SWIFT_LOG="$(mktemp)"
+if ! swift build -c release >"$SWIFT_LOG" 2>&1; then
+  grep -E "error:" "$SWIFT_LOG" || tail -n 40 "$SWIFT_LOG"
+  echo "swift build failed (full log: $SWIFT_LOG)" >&2
+  exit 1
+fi
+grep -E "error|warning: var|Build complete" "$SWIFT_LOG" || true
+rm -f "$SWIFT_LOG"
 # Assemble and sign in a non-iCloud-synced staging dir first: this repo lives under iCloud
 # Drive (~/Documents), which re-attaches resource forks / Finder info to files as they're
 # written there, and codesign refuses to sign a bundle containing them. Signing outside the
