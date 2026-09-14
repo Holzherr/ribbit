@@ -51,6 +51,483 @@ Sources/VoicePet/
 
 ## Phase 3: session screen, live transcript, enhance
 
+### Task 3.0: Prerequisites from plan 1 final review
+
+Findings 7-11 of the plan 1 final review. Land all of this before Task 3.1: Task 3.3 writes jots and enhanced text while a note is processing, and its auto-enhance step builds on the merge from Step 1.
+
+**Files:**
+- Modify: `Sources/VoicePet/Meeting.swift` (`NoteProcessor.mergeProcessed`, `MeetingRecorder.stop()` merges instead of overwriting)
+- Modify: `Sources/VoicePet/Bridge.swift` (`startTicks`/`stopTicks` internal and no longer called from `session.start`/`session.stop`; `notes.search`; `settings.set` skips an unchanged engine)
+- Modify: `Sources/VoicePet/AppDelegate.swift` (ticks follow `onStateChange`; selftest runs the merge check)
+- Modify: `Sources/VoicePet/NotesWindow.swift` (developer extras behind DEBUG or a defaults flag; selftest checks `notes.search` and a no-op `speechEngine` write)
+- Modify: `web/notes/src/bridge/types.ts`, `mock.ts`, `mock.test.ts`, `wk.ts`, `wk.test.ts`
+- Modify: `web/notes/src/App.tsx`, `App.test.tsx`
+- Modify: `web/notes/src/features/library/model.ts`, `model.test.ts`, `components/library-screen.tsx`, `components/note-list.tsx`, `components/note-list.stories.tsx`
+- Modify: `web/notes/src/features/note/components/note-detail-screen.tsx`; Create: `note-detail-screen.test.tsx`
+- Create: `web/notes/src/features/enhance/components/enhanced-notes.tsx`, `enhanced-notes.stories.tsx`, `enhanced-notes.test.tsx`; Delete: `web/notes/src/features/note/components/summary-view.tsx`
+- Create: `web/notes/src/shared/components/ui/level-meter.tsx`, `level-meter.stories.tsx`, `level-meter.test.tsx`, `icon-button.stories.tsx`; Modify: `web/notes/src/features/session/components/session-bar.tsx`
+- Modify: `web/notes/src/features/settings/components/settings-screen.tsx`
+- Modify: `docs/superpowers/specs/2026-09-14-granola-notes-ui-design.md`, `CLAUDE.md`
+
+**Interfaces:**
+- Produces (Swift): `NoteProcessor.mergeProcessed(_ processed: Note, into current: Note) -> Note` — copies the engine-owned fields `segments`, `summary`, `status`, `error`, `duration` from `processed` onto `current`; takes `processed.title` only while `current.title` is still the default `"Untitled"`. `Bridge.startTicks()` / `Bridge.stopTicks()` become internal.
+- Produces (TS): command `'notes.search': { payload: { query: string }; reply: string[] }` (ids of notes whose transcript contains the query, case-insensitive; `[]` for a blank query). `filterNotes(notes, query, transcriptHits?: ReadonlySet<string>)`. `NoteList` gains `transcriptHits?: ReadonlySet<string>` and `onStart?: () => void`. `LibraryScreen` and `SettingsScreen` gain `onError?: (message: string) => void`. `LevelMeter({ level, bars?: number })`. `EnhancedNotes({ note, onEdit? })` replaces `SummaryView`.
+
+- [ ] **Step 1: Processing merges into the stored note instead of overwriting it (finding 7)**
+
+`MeetingRecorder.stop()` upserts `n`, a copy of the note taken at stop time, so a title, jots or speaker names typed while processing runs are lost, and `NoteProcessor.process` replaces the title with `fallbackTitle`/the summarizer's title. A note deleted while processing also comes back.
+
+In `Meeting.swift`, add to `enum NoteProcessor`:
+```swift
+    /// Result of processing folded into the note as it is stored now. The engine owns segments, summary,
+    /// status, error and duration; everything else (title once set, jots, speaker names, attendees,
+    /// template, enhanced, calendarEventID) may have been edited while processing ran and is kept.
+    static func mergeProcessed(_ processed: Note, into current: Note) -> Note {
+        var out = current
+        out.segments = processed.segments
+        out.summary = processed.summary
+        out.status = processed.status
+        out.error = processed.error
+        out.duration = processed.duration
+        if current.title == Note().title { out.title = processed.title }
+        return out
+    }
+```
+In `MeetingRecorder.stop()`, replace the `await MainActor.run { ... }` block with:
+```swift
+                let processed = n
+                await MainActor.run {
+                    // Re-read: the note may have been renamed, jotted in, or deleted while processing ran.
+                    if let current = Store.shared.notes.first(where: { $0.id == id }) {
+                        Store.shared.upsert(NoteProcessor.mergeProcessed(processed, into: current))
+                    }
+                    self?.isProcessing = false
+                    self?.onStateChange?(processed.status == "ready" ? "done" : "confused")
+                }
+```
+`AppDelegate` already forwards the stored note (looked up by `currentNoteID`) on `done`/`confused`, so the page receives the merged note, and nothing when the note was deleted.
+
+Task 3.3 Step 6 adds more upserts inside this `Task`. Each of them must go through `mergeProcessed` the same way, and the auto-enhance result is written to `enhanced` only when the stored note's `enhanced` is still empty (Step 5 below makes it user-editable).
+
+- [ ] **Step 2: Selftest covers the merge**
+
+In `NotesWindow.swift`, inside `extension NotesWindow` (the `--bridge-selftest` section), add:
+```swift
+    /// Pure check of NoteProcessor.mergeProcessed, reported alongside the JS round trips.
+    static func mergeSelfTest() -> (ok: Bool, lines: [String]) {
+        var current = Note()
+        current.title = "Board prep"; current.jots = "typed while processing"; current.speakerNames = ["me": "Me", "s1": "Fiona"]
+        var processed = current
+        processed.title = "Engine title"; processed.jots = ""; processed.speakerNames = ["me": "Me"]
+        processed.summary = "S"; processed.status = "ready"; processed.duration = 42
+        processed.segments = [Segment(speaker: "s1", start: 0, end: 1, text: "hi")]
+        let kept = NoteProcessor.mergeProcessed(processed, into: current)
+        let untitled = NoteProcessor.mergeProcessed(processed, into: Note())
+        var problems: [String] = []
+        if kept.title != "Board prep" { problems.append("title overwritten: \(kept.title)") }
+        if kept.jots != "typed while processing" { problems.append("jots overwritten") }
+        if kept.speakerNames["s1"] != "Fiona" { problems.append("speaker names overwritten") }
+        if kept.summary != "S" || kept.status != "ready" || kept.duration != 42 || kept.segments.count != 1 { problems.append("engine fields not copied") }
+        if untitled.title != "Engine title" { problems.append("untitled note did not take the engine title: \(untitled.title)") }
+        return problems.isEmpty ? (true, ["SELFTEST ok mergeProcessed"]) : (false, ["SELFTEST fail mergeProcessed: " + problems.joined(separator: "; ")])
+    }
+```
+In `AppDelegate.runBridgeSelfTest()`, replace `notesWindow.runSelfTest { ok in finish(ok, "") }` with:
+```swift
+        let merge = NotesWindow.mergeSelfTest()
+        merge.lines.forEach { print($0) }
+        notesWindow.runSelfTest { ok in finish(ok && merge.ok, "") }
+```
+Run it. (Adding this check before Step 1's function exists fails the build with `type 'NoteProcessor' has no member 'mergeProcessed'`; with Step 1 in place it passes.)
+```bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer && ./build.sh
+defaults write ai.learnvector.voicepet brainOn -bool false; defaults write ai.learnvector.voicepet voiceOn -bool false; defaults write ai.learnvector.voicepet sounds -bool false
+VOICEPET_DEMO_DATA=1 build/VoicePet.app/Contents/MacOS/VoicePet --bridge-selftest | grep SELFTEST; pkill -x VoicePet
+```
+Expected: `SELFTEST ok mergeProcessed` among the lines and `SELFTEST PASS`.
+
+- [ ] **Step 3: Ticks follow the recorder, and the page adopts a session it did not start (finding 8)**
+
+`Bridge.swift`: change `private func startTicks()` and `private func stopTicks()` to `func startTicks()` / `func stopTicks()`. Delete the `startTicks()` line from `session.start` and the `stopTicks()` line from `session.stop`.
+
+`AppDelegate.swift`, inside `meeting.onStateChange`, after the `note.updated` forwarding line:
+```swift
+            if s == "noting" { self?.notesWindow.bridge.startTicks() }
+            if s == "thinking" { self?.notesWindow.bridge.stopTicks() }
+```
+Now every start (window button, Task 4.2's call prompt, any future frog menu item) ticks, and a reloaded page keeps receiving ticks because the timer lives in Swift.
+
+`App.tsx` only shows a `SessionBar` for sessions it started or found on mount. Adopt one on the first tick for a note it does not know about. Replace the `session.tick` effect with:
+```tsx
+  const sessionRef = useRef<Session | null>(null);
+  sessionRef.current = session;
+  const adopting = useRef<string | null>(null);
+
+  // Ticks come from Swift only while really recording, so a tick for an unknown note means a session
+  // started outside this page (call prompt, window reopened): adopt it.
+  useEffect(() => bridge.on('session.tick', t => {
+    if (sessionRef.current) {
+      setSession(prev => prev && prev.noteId === t.noteId ? { ...prev, elapsed: t.elapsed, level: t.level } : prev);
+      return;
+    }
+    if (adopting.current === t.noteId) return;
+    adopting.current = t.noteId;
+    bridge.call('notes.get', { id: t.noteId })
+      .then(note => { if (note.status === 'recording') setSession({ noteId: t.noteId, elapsed: t.elapsed, level: t.level, title: note.title }); })
+      .catch(e => setError((e as Error).message))
+      .finally(() => { adopting.current = null; });
+  }), [bridge]);
+```
+(`useRef` joins the `react` import.)
+
+Add to `App.test.tsx`:
+```tsx
+describe('App adopts a session started elsewhere', () => {
+  it('shows the session bar on a tick for a recording note it did not start', async () => {
+    const live = { ...FIXTURE_NOTES[1]!, id: 'n-live', title: 'Call from prompt', status: 'recording' as const };
+    const bridge = createMockBridge([...FIXTURE_NOTES, live]);
+    render(<App bridge={bridge} />);
+    await screen.findByText('Cat sitter marketplace kickoff');
+
+    act(() => { bridge.emit('session.tick', { noteId: 'n-live', elapsed: 65, level: 0.2 }); });
+    expect(await screen.findByText('01:05')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument();
+  });
+
+  it('ignores a tick for a note that is not recording', async () => {
+    const bridge = createMockBridge(FIXTURE_NOTES);
+    render(<App bridge={bridge} />);
+    await screen.findByText('Cat sitter marketplace kickoff');
+
+    act(() => { bridge.emit('session.tick', { noteId: 'n-ready', elapsed: 65, level: 0.2 }); });
+    await new Promise(r => setTimeout(r, 50));
+    expect(screen.queryByRole('button', { name: /stop/i })).not.toBeInTheDocument();
+  });
+});
+```
+Run `cd web/notes && npm test -- src/App.test.tsx`: the first test fails before the effect change (`Unable to find an element with the text: 01:05`), both pass after. A real Swift-side start can't be exercised headlessly (plan 1 Ruling R1); Task 4.2 Step 5's manual pass covers it: after Accept, confirm the session bar appears and counts up.
+
+- [ ] **Step 4: Transcript search gets an owner (finding 9)**
+
+`notes.list` strips segments, so `filterNotes`' transcript match never hits in the app. Search transcripts in Swift, where the segments are.
+
+`types.ts`, in `Commands`:
+```ts
+  'notes.search': { payload: { query: string }; reply: string[] };   // ids whose transcript contains query
+```
+`mock.ts`, in `impl`:
+```ts
+        'notes.search': ({ query }) => { const q = query.trim().toLowerCase(); return q ? notes.filter(n => n.segments.some(s => s.text.toLowerCase().includes(q))).map(n => n.id) : []; },
+```
+`Bridge.swift`, in `handle`:
+```swift
+        case "notes.search":
+            let q = ((payload as? [String: Any])?["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !q.isEmpty else { return [String]() }
+            return Store.shared.notes.filter { note in note.segments.contains { $0.text.localizedCaseInsensitiveContains(q) } }.map { $0.id.uuidString }
+```
+`library/model.ts`:
+```ts
+/** Title, jots, enhanced and summary match locally; transcript matches come from `notes.search` as `transcriptHits` (list rows carry no segments). */
+export function filterNotes(notes: Note[], query: string, transcriptHits: ReadonlySet<string> = new Set()): Note[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return notes;
+  return notes.filter(n => transcriptHits.has(n.id) || [n.title, n.jots, n.enhanced, n.summary].some(t => t.toLowerCase().includes(q)));
+}
+```
+`note-list.tsx`: add `transcriptHits?: ReadonlySet<string>` to the props and call `filterNotes(notes, query, transcriptHits)`.
+`library-screen.tsx`: hold `const [hits, setHits] = useState<ReadonlySet<string>>(new Set());`, pass `transcriptHits={hits}` to `NoteList`, and add:
+```tsx
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) { setHits(new Set()); return; }
+    let alive = true;
+    const t = window.setTimeout(() => {
+      bridge.call('notes.search', { query: q }).then(ids => { if (alive) setHits(new Set(ids)); }).catch(() => { if (alive) setHits(new Set()); });
+    }, 150);
+    return () => { alive = false; window.clearTimeout(t); };
+  }, [bridge, query]);
+```
+Tests. `library/model.test.ts`, replace the first test's `'vet clinics'` line with:
+```ts
+    expect(filterNotes(FIXTURE_NOTES, 'go to market').map(n => n.id)).toEqual([]);
+    expect(filterNotes(FIXTURE_NOTES, 'go to market', new Set(['n-ready'])).map(n => n.id)).toEqual(['n-ready']);
+```
+and rename the test to `'filters by title, jots, enhanced, summary and transcript hits, case-insensitive'`. (`go to market` appears only in `n-ready`'s segments.) `mock.test.ts`:
+```ts
+  it('searches transcripts', async () => {
+    const b = createMockBridge(FIXTURE_NOTES);
+    expect(await b.call('notes.search', { query: 'GO TO MARKET' })).toEqual(['n-ready']);
+    expect(await b.call('notes.search', { query: '  ' })).toEqual([]);
+  });
+```
+`App.test.tsx`:
+```tsx
+describe('App library search', () => {
+  it('finds a note by a phrase that only appears in its transcript', async () => {
+    const bridge = createMockBridge(FIXTURE_NOTES);
+    render(<App bridge={bridge} />);
+    await screen.findByText('Dylan hiring sync');
+    fireEvent.change(screen.getByPlaceholderText('Search notes'), { target: { value: 'go to market' } });
+    expect(screen.queryByText('Cat sitter marketplace kickoff')).not.toBeInTheDocument();   // no local match; waits for notes.search
+    expect(await screen.findByText('Cat sitter marketplace kickoff')).toBeInTheDocument();
+    expect(screen.queryByText('Dylan hiring sync')).not.toBeInTheDocument();
+  });
+});
+```
+Selftest, `NotesWindow.selfTestJS`, after the `notes.update` check (demo note 1's transcript contains "go to market"):
+```js
+      await check('notes.search', async () => {
+        const r = await call('notes.search', { query: 'go to market' });
+        if (!r.ok) return 'error ' + r.error;
+        const blank = await call('notes.search', { query: ' ' });
+        if (!blank.ok || blank.payload.length !== 0) return 'blank query returned ' + JSON.stringify(blank).slice(0, 200);
+        return Array.isArray(r.payload) && r.payload.length === 1 && notes.some(n => n.id === r.payload[0]) ? true : 'got ' + JSON.stringify(r.payload);
+      });
+```
+Run `npm test`, `npm run check-types`, then the Step 2 selftest commands; expect `SELFTEST ok notes.search`.
+
+- [ ] **Step 5: Spec brick gaps (finding 10)**
+
+Decisions: LevelMeter, IconButton story, the library empty-state action and the editable Notes tab are built here. Sheet is cut: no screen in this plan needs one (RenamePopover is an anchored card, CallPrompt a toast, the Copy menu uses Dropdown from Task 5.2).
+
+a. `shared/components/ui/level-meter.tsx`:
+```tsx
+import { cn } from '@/shared/utils/ui-utils';
+
+/** Mic level as `bars` vertical bars of rising height (default 5). Active bars use body ink, the rest line grey. Decorative: aria-hidden. */
+export function LevelMeter({ level, bars = 5 }: { level: number; bars?: number }) {
+  const active = Math.round(Math.min(1, Math.max(0, level)) * bars);
+  return (
+    <span className="flex items-end gap-0.5" aria-hidden>
+      {Array.from({ length: bars }, (_, i) => i + 1).map(i => <span key={i} data-active={i <= active || undefined} className={cn('w-1 rounded-sm', i <= active ? 'bg-body' : 'bg-line')} style={{ height: 4 + i * 2 }} />)}
+    </span>
+  );
+}
+```
+`session-bar.tsx`: replace the inline bars (`const bars = ...` and the `<span className="flex items-end gap-0.5" ...>` element) with `<LevelMeter level={level} />`.
+`level-meter.test.tsx`:
+```tsx
+import { render } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import { LevelMeter } from './level-meter';
+
+describe('LevelMeter', () => {
+  it('lights bars in proportion to level and clamps out-of-range input', () => {
+    const count = (level: number) => render(<LevelMeter level={level} />).container.querySelectorAll('[data-active]').length;
+    expect(count(0)).toBe(0);
+    expect(count(0.6)).toBe(3);
+    expect(count(1.7)).toBe(5);
+    expect(count(-1)).toBe(0);
+  });
+});
+```
+`level-meter.stories.tsx`: `title: 'Shared/UI/LevelMeter'`, description "Five bars of rising height; active bars in body ink, the rest line grey.", stories `Silent` (`level: 0`), `Mid` (`0.6`), `Full` (`1`).
+`icon-button.stories.tsx`: `title: 'Shared/UI/IconButton'`, description "Quiet 28px square button; the icon is the child and `label` is its accessible name and tooltip.", `args: { onClick: fn() }`, stories `Delete` (`label: 'Delete note'`, `children: <Trash2 />`) and `Back` (`label: 'Back'`, `children: <ArrowLeft />`).
+
+b. Library empty state action. `note-list.tsx`: add `onStart?: () => void` and pass to the no-notes empty state (not the no-matches one):
+```tsx
+action={!query && onStart ? <Button variant="text" size="sm" onClick={onStart}><Mic /> Start a session now</Button> : undefined}
+```
+with body text `'Hold fn to dictate anywhere. For meetings, press Start notes (or right-click the frog → Notes) before the call.'`. `variant="text"` keeps the sidebar's Start notes the only brand-filled button. `library-screen.tsx` passes `onStart={onStart}` to `NoteList`. `note-list.stories.tsx` `Empty` passes `onStart={() => {}}`. Test in `App.test.tsx`:
+```tsx
+  it('starts a session from the empty library', async () => {
+    const bridge = createMockBridge([]);
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole('button', { name: /start a session now/i }));
+    expect(await screen.findByRole('button', { name: /stop/i })).toBeInTheDocument();
+  });
+```
+
+c. Editable Notes tab. Move `features/note/components/summary-view.tsx` to `features/enhance/components/enhanced-notes.tsx` (`git mv`), rename the component to `EnhancedNotes` and add editing:
+```tsx
+import type { Note } from '@/bridge/types';
+import { Button } from '@/shared/components/ui/button';
+import { EmptyState } from '@/shared/components/ui/empty-state';
+import { Markdown } from '@/shared/components/ui/markdown';
+import { Pencil, Sparkles } from 'lucide-react';
+import { useState } from 'react';
+
+/** Notes tab body: `enhanced` if present, else `summary`, rendered as markdown, with an Edit text button top-right when `onEdit` is given. Edit swaps in a textarea; Done saves through `onEdit` (only if changed). Error banner on top when `note.error` is set. */
+export function EnhancedNotes({ note, onEdit }: { note: Note; onEdit?: (enhanced: string) => void }) {
+  const text = note.enhanced || note.summary;
+  const [draft, setDraft] = useState<string | null>(null);
+  const done = () => { if (draft !== null && draft !== text) onEdit?.(draft); setDraft(null); };
+  return (
+    <div className="px-6 py-4">
+      {note.error && <div className="mb-4 rounded-card bg-warn-soft px-3 py-2 text-[13px] text-warn">{note.error}</div>}
+      {onEdit && text && <div className="mb-2 flex justify-end">{draft === null
+        ? <Button variant="text" size="sm" onClick={() => setDraft(text)}><Pencil /> Edit</Button>
+        : <Button variant="text" size="sm" onClick={done}>Done</Button>}</div>}
+      {draft !== null
+        ? <textarea aria-label="Notes" value={draft} onChange={e => setDraft(e.target.value)} className="min-h-[320px] w-full resize-y rounded-control border border-line bg-surface p-3 font-mono text-[13px] text-ink outline-none focus:border-brand" />
+        : text ? <Markdown source={text} /> : <EmptyState icon={<Sparkles />} title="No notes yet" body={note.status === 'processing' ? 'Writing them now.' : 'Add a Claude key or turn on Apple Intelligence in Settings to get notes.'} />}
+    </div>
+  );
+}
+```
+`note-detail-screen.tsx`: import `EnhancedNotes` and render `<EnhancedNotes note={note} onEdit={v => patch({ enhanced: v })} />` in the Notes tab. Task 3.3 Step 7 then puts `TemplatePicker` above `EnhancedNotes`.
+`enhanced-notes.test.tsx`:
+```tsx
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { FIXTURE_NOTES } from '@/fixtures/notes';
+import { EnhancedNotes } from './enhanced-notes';
+
+describe('EnhancedNotes', () => {
+  it('saves an edit on Done and skips the write when nothing changed', () => {
+    const onEdit = vi.fn();
+    render(<EnhancedNotes note={FIXTURE_NOTES[0]!} onEdit={onEdit} />);
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(onEdit).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: '# Rewritten' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(onEdit).toHaveBeenCalledWith('# Rewritten');
+    expect(screen.queryByRole('textbox', { name: 'Notes' })).not.toBeInTheDocument();
+  });
+});
+```
+The brick does not own the note, so the saved text rendering back is covered in `note-detail-screen.test.tsx` (Step 6a).
+`enhanced-notes.stories.tsx`: `title: 'Enhance/EnhancedNotes'`, description matching the doc comment, stories `Ready` (`FIXTURE_NOTES[0]`, `onEdit: fn()`), `Processing` (`FIXTURE_NOTES[1]`), `Failed` (`FIXTURE_NOTES[2]`), `Editing` (`Ready` args plus `play` clicking Edit via `userEvent` from `storybook/test`).
+
+d. Spec (`docs/superpowers/specs/2026-09-14-granola-notes-ui-design.md`): remove `Sheet` from the Shared/UI row of the bricks table; in Design tokens change "red only for the recording dot" to "red only for recording and failure states" (matches `web/notes/DESIGN.md` since plan 1).
+
+Run `npm test`, `npm run check-types`, `npm run build-storybook`; open Storybook and confirm the four new/changed stories render with no console errors and a clean Accessibility panel.
+
+- [ ] **Step 6: Minor follow-ups (finding 11)**
+
+a. **Debounce title writes.** `NoteDetailScreen` sends `notes.update` per keystroke, and each echoed `note.updated` can overwrite newer typing. Keep the title local, write after 400 ms idle, flush on note switch/unmount, and don't let echoes replace a title still waiting to be written:
+```tsx
+  const pendingTitle = useRef<string | null>(null);
+  const titleTimer = useRef<number | null>(null);
+  const flushTitle = useCallback(() => {
+    if (titleTimer.current) window.clearTimeout(titleTimer.current);
+    titleTimer.current = null;
+    const t = pendingTitle.current; pendingTitle.current = null;
+    if (t !== null) void bridge.call('notes.update', { id, patch: { title: t } }).catch(() => {});
+  }, [bridge, id]);
+  useEffect(() => flushTitle, [flushTitle]);
+  const onTitle = (t: string) => {
+    setNote(prev => prev && { ...prev, title: t });
+    pendingTitle.current = t;
+    if (titleTimer.current) window.clearTimeout(titleTimer.current);
+    titleTimer.current = window.setTimeout(flushTitle, 400);
+  };
+```
+The `note.updated` handler becomes `n => { if (n.id === id) setNote(prev => pendingTitle.current !== null && prev ? { ...n, title: prev.title } : n); }`, and `NoteHeader` gets `onTitle={onTitle}`. (`useCallback`, `useRef` join the `react` import; declare these hooks above the `if (!note) return null` early return.)
+`note-detail-screen.test.tsx`:
+```tsx
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { createMockBridge } from '@/bridge/mock';
+import { FIXTURE_NOTES } from '@/fixtures/notes';
+import { NoteDetailScreen } from './note-detail-screen';
+
+describe('NoteDetailScreen', () => {
+  it('writes the title once after typing settles', async () => {
+    const bridge = createMockBridge(FIXTURE_NOTES);
+    const spy = vi.spyOn(bridge, 'call');
+    render(<NoteDetailScreen bridge={bridge} id="n-ready" onDeleted={() => {}} />);
+    const input = await screen.findByRole('textbox', { name: 'Title' });
+    for (const v of ['C', 'Ca', 'Cat']) fireEvent.change(input, { target: { value: v } });
+    await waitFor(() => expect(spy.mock.calls.filter(c => c[0] === 'notes.update')).toHaveLength(1), { timeout: 1000 });
+    expect(spy.mock.calls.find(c => c[0] === 'notes.update')![1]).toEqual({ id: 'n-ready', patch: { title: 'Cat' } });
+    expect(input).toHaveValue('Cat');
+  });
+
+  it('saves an edited Notes tab through notes.update', async () => {
+    const bridge = createMockBridge(FIXTURE_NOTES);
+    render(<NoteDetailScreen bridge={bridge} id="n-ready" onDeleted={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: /edit/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: '# Rewritten' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(bridge.notes.find(n => n.id === 'n-ready')!.enhanced).toBe('# Rewritten'));
+    expect(await screen.findByRole('heading', { name: 'Rewritten' })).toBeInTheDocument();
+  });
+});
+```
+
+b. **Catch unhandled rejections.** `App.tsx`: SessionBar `onStop={() => { bridge.call('session.stop', undefined).catch(e => setError((e as Error).message)); }}`; the mount-recovery effect gets `.catch(e => { if (alive) setError((e as Error).message); })` after its `.then`. `LibraryScreen` and `SettingsScreen` take `onError?: (message: string) => void`; `notes.list` and `settings.get`/`settings.set` calls end in `.catch(e => onError?.((e as Error).message))`; `App` passes `onError={setError}` to both. Test in `App.test.tsx`:
+```tsx
+  it('shows an error when the note list fails to load', async () => {
+    const bridge = createMockBridge(FIXTURE_NOTES);
+    const real = bridge.call.bind(bridge);
+    bridge.call = ((type, payload) => type === 'notes.list' ? Promise.reject(new Error('disk gone')) : real(type, payload)) as typeof bridge.call;
+    render(<App bridge={bridge} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('disk gone');
+  });
+```
+
+c. **Call timeout in `wk.ts`.** A reply that never comes leaves a promise pending forever. In `createWKBridge`:
+```ts
+const DEFAULT_TIMEOUT_MS = 15_000;
+// Commands that wait on a model or a permission dialog get longer.
+const TIMEOUT_MS: Partial<Record<CommandType, number>> = { 'enhance.run': 120_000, 'chat.ask': 120_000, 'session.start': 120_000, 'calendar.authorize': 120_000 };
+```
+`pending` entries gain `timer: number`; `call` sets `const timer = window.setTimeout(() => { if (pending.delete(id)) reject(new Error(`bridge timeout: ${type}`)); }, TIMEOUT_MS[type] ?? DEFAULT_TIMEOUT_MS);` and `receive` calls `window.clearTimeout(p.timer)` before resolving/rejecting. `wk.test.ts`:
+```ts
+  it('rejects a call with no reply after the timeout and ignores a late reply', async () => {
+    vi.useFakeTimers();
+    try {
+      const post = vi.fn();
+      window.webkit = { messageHandlers: { ribbit: { postMessage: post } } };
+      const b = createWKBridge();
+      const p = b.call('notes.get', { id: 'x' });
+      const sent = post.mock.calls[0]![0] as { id: string };
+      vi.advanceTimersByTime(15_000);
+      await expect(p).rejects.toThrow('bridge timeout: notes.get');
+      expect(() => window.ribbit!.receive({ id: sent.id, ok: true, payload: {} })).not.toThrow();
+    } finally { vi.useRealTimers(); }
+  });
+```
+
+d. **`settings.set` leaves an unchanged engine alone.** `selectEngine` rebuilds the transcriber (Parakeet reloads its model). In `Bridge.swift`:
+```swift
+            if let v = p["speechEngine"] as? String, v != (UserDefaults.standard.string(forKey: "engine") ?? "apple") { app.selectEngine(v) }
+```
+Selftest: change the `settings.set` check's payload to `{ summaryEngine: settings.summaryEngine, speechEngine: settings.speechEngine }` and also require `r.payload.speechEngine === settings.speechEngine`.
+
+e. **Developer extras off in release.** `NotesWindow.init`:
+```swift
+        #if DEBUG
+        let devTools = true
+        #else
+        let devTools = UserDefaults.standard.bool(forKey: "notesDevTools")
+        #endif
+        if devTools { cfg.preferences.setValue(true, forKey: "developerExtrasEnabled") }
+```
+`build.sh` builds release, so for Inspect Element run `defaults write ai.learnvector.voicepet notesDevTools -bool true` once. Add that command to the `NotesWindow` bullet in `CLAUDE.md` (Task 3.2 Step 4 already runs it before opening the inspector).
+
+f. **Spec matches the unknown-command behaviour.** In the spec's Error handling list, replace "Bridge command with unknown type → `error` event, logged with `NSLog`." with "Bridge command with unknown type → reply `ok: false` with `Unknown command <type>`, logged with `NSLog`." (what `Bridge.swift` does and the selftest's `unknown command` check asserts).
+
+- [ ] **Step 7: Verify**
+
+```bash
+cd web/notes && npm run check-types && npm test && npm run build-storybook && cd ../..
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer && ./build.sh
+defaults write ai.learnvector.voicepet brainOn -bool false; defaults write ai.learnvector.voicepet voiceOn -bool false; defaults write ai.learnvector.voicepet sounds -bool false
+VOICEPET_DEMO_DATA=1 build/VoicePet.app/Contents/MacOS/VoicePet --bridge-selftest | grep SELFTEST; pkill -x VoicePet
+```
+Expected: types clean, all tests pass, Storybook builds, selftest prints `ok` for `mergeProcessed`, `notes.search` and `settings.set`, then `SELFTEST PASS`.
+
+- [ ] **Step 8: Commit after each step**
+
+Steps run in order, so each commit takes everything the step touched. After Steps 2, 3, 4, 5 and 6 respectively, run the `git add` line, the matching commit, then `git push`:
+```bash
+git add Sources/VoicePet web/notes/src web/notes/DESIGN.md CLAUDE.md docs/superpowers/specs
+git commit -m "fix(meeting): merge processing results into the stored note instead of overwriting edits"   # after Step 2
+git commit -m "fix(session): ticks follow the recorder; the page adopts sessions started elsewhere"      # after Step 3
+git commit -m "feat(library): transcript search through notes.search"                                     # after Step 4
+git commit -m "feat(notes): LevelMeter, IconButton story, empty-library start, editable Notes tab; cut Sheet"  # after Step 5
+git commit -m "fix(notes): debounced title writes, caught bridge errors, call timeouts, dev tools off in release"  # after Step 6
+git push
+```
+
+---
+
 ### Task 3.1: Templates and Enhancer in Swift
 
 **Files:**
@@ -278,6 +755,7 @@ and after the note is stored:
 - [ ] **Step 4: Build and observe in the Web Inspector**
 
 ```bash
+defaults write ai.learnvector.voicepet notesDevTools -bool true   # release builds hide Inspect Element otherwise (Task 3.0 Step 6e)
 ./build.sh && open build/VoicePet.app --args --notes
 ```
 Start a session, talk for 45 s, open Inspect Element → Console and run `ribbit.receive = new Proxy(ribbit.receive, {apply(t, th, a){ console.log(a[0]); return t.apply(th, a) }})` before starting to see `transcript.segment` events arrive with `speaker: "me"` after ~20-25 s. On a FaceTime call, `s1` segments appear too.
@@ -458,12 +936,12 @@ In `MeetingRecorder.stop()`, inside the existing `Task` after `n = try await Not
                     }
                     n.status = "ready"
 ```
-Add `var onNoteUpdated: ((Note) -> Void)?` to `MeetingRecorder` and call it wherever `Store.shared.upsert(n)` happens in `stop()`. In `AppDelegate.applicationDidFinishLaunching`: `meeting.onNoteUpdated = { [weak self] n in self?.notesWindow.bridge.send(event: "note.updated", payload: n) }`. Remove the ad-hoc `note.updated` forwarding added in the foundation plan Task 2.2 if it now duplicates.
+Every upsert in this `Task` goes through `NoteProcessor.mergeProcessed` against a fresh `Store.shared.notes` read (Task 3.0 Step 1), and `n.enhanced` is copied onto the stored note only when its `enhanced` is still empty, so edits made while processing survive. Add `var onNoteUpdated: ((Note) -> Void)?` to `MeetingRecorder` and call it wherever `Store.shared.upsert(n)` happens in `stop()`. In `AppDelegate.applicationDidFinishLaunching`: `meeting.onNoteUpdated = { [weak self] n in self?.notesWindow.bridge.send(event: "note.updated", payload: n) }`. Remove the ad-hoc `note.updated` forwarding added in the foundation plan Task 2.2 if it now duplicates.
 
 - [ ] **Step 7: App.tsx and NoteDetailScreen**
 
 App: when `session` is set and `selected === session.noteId`, render `<SessionScreen bridge noteId onStopped={() => setSession(null)} />` instead of `NoteDetailScreen`. `start()` sets both.
-NoteDetailScreen: load `templates.list` once; in the Notes tab, render `<TemplatePicker templates value={note.template} onChange={t => patch({ template: t })} onRun={() => void bridge.call('enhance.run', { id, template: note.template }).catch(() => {})} busy={note.status === 'enhancing'} />` above `SummaryView`. Errors surface through `note.error` in `SummaryView`.
+NoteDetailScreen: load `templates.list` once; in the Notes tab, render `<TemplatePicker templates value={note.template} onChange={t => patch({ template: t })} onRun={() => void bridge.call('enhance.run', { id, template: note.template }).catch(() => {})} busy={note.status === 'enhancing'} />` above `EnhancedNotes` (Task 3.0 Step 5c). Errors surface through `note.error` in `EnhancedNotes`.
 
 - [ ] **Step 8: Stories**
 
@@ -784,7 +1262,7 @@ App: subscribe to `call.detected` → set `prompt`; Accept → `session.start({ 
 
 - [ ] **Step 4: Story** `'Calendar/CallPrompt'`: `WithEvent`, `NoEvent`.
 
-- [ ] **Step 5: Build, open FaceTime and start a call to yourself: within 5 s the window comes forward with the toast. Not now → no re-prompt for 10 min. Accept → session starts with the event title. Commit.**
+- [ ] **Step 5: Build, open FaceTime and start a call to yourself: within 5 s the window comes forward with the toast. Not now → no re-prompt for 10 min. Accept → session starts with the event title and the session bar counts up (Task 3.0 Step 3). Commit.**
 
 ```bash
 git add Sources/VoicePet/CallDetector.swift Sources/VoicePet/AppDelegate.swift Sources/VoicePet/Bridge.swift web/notes/src
@@ -841,7 +1319,7 @@ export function ChatBox({ onAsk }: { onAsk: (q: string) => Promise<string> }) {
   );
 }
 ```
-In `NoteDetailScreen` Notes tab: `<ChatBox onAsk={q => bridge.call('chat.ask', { id, question: q }).then(r => r.answer)} />` below `SummaryView` (outside the scrolling area, pinned).
+In `NoteDetailScreen` Notes tab: `<ChatBox onAsk={q => bridge.call('chat.ask', { id, question: q }).then(r => r.answer)} />` below `EnhancedNotes` (outside the scrolling area, pinned).
 
 - [ ] **Step 2: Story** `'Enhance/ChatBox'` with a mock `onAsk` that resolves after 800 ms.
 
